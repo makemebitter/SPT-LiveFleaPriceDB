@@ -38,7 +38,15 @@ const fetchTarkovDevData = (async (graphQLClient, gameMode) => {
             id
             name
             avg24hPrice
+            low24hPrice
             changeLast48hPercent
+            sellFor {
+                priceRUB
+                source
+                vendor {
+                    name
+                }
+            }
         }
     }
     `
@@ -53,13 +61,15 @@ const processData = ((gameMode) => {
     const sptItems = JSON.parse(fs.readFileSync('items.json', 'utf-8'));
     const sptPrices = JSON.parse(fs.readFileSync('sptprices.json', 'utf-8'));
 
-    // Start with a base of the SPT price list
-    const priceList = structuredClone(sptPrices);
+    // Start with a base of the SPT price list for both price types
+    const priceListAvg24h = structuredClone(sptPrices);
+    const priceListFleaMarket = structuredClone(sptPrices);
 
     // Filter tarkov.dev prices in the same way SPT does
     const filteredTarkovDevPrices = processTarkovDevPrices(gameMode, tarkovDevPrices);
 
     // Get a price for each item in the items list
+    let processedCount = 0;
     for (const itemId in filteredTarkovDevPrices)
     {
         // Skip items that aren't in SPTs item database, this tends to be presets
@@ -69,12 +79,23 @@ const processData = ((gameMode) => {
         }
 
         const itemPrice = filteredTarkovDevPrices[itemId];
+        
+        // Update avg24h price list (original behavior)
         if (itemPrice.Average24hPrice)
         {
-            if (DEBUG) console.log(`[${gameMode}] Adding item: ${itemPrice.TemplateId} ${itemPrice.Name} -> ${itemPrice.Average24hPrice}`);
-            priceList[itemId] = itemPrice.Average24hPrice;
+            if (DEBUG) console.log(`[${gameMode}] Adding item: ${itemPrice.TemplateId} ${itemPrice.Name} -> avg24h: ${itemPrice.Average24hPrice}, flea: ${itemPrice.FleaMarketPrice}`);
+            priceListAvg24h[itemId] = itemPrice.Average24hPrice;
         }
+        
+        // Update flea market price list (new behavior)
+        if (itemPrice.FleaMarketPrice)
+        {
+            priceListFleaMarket[itemId] = itemPrice.FleaMarketPrice;
+        }
+        
+        processedCount++;
     }
+    console.log(`[${gameMode}] Processed ${processedCount} items`);
 
     // Ammo packs are easy to exploit, they're never listed on flea which causes server to use handbook price, often contain ammo worth x100 the cost of handbook price
     const ammoPacks = Object.values(sptItems)
@@ -84,21 +105,25 @@ const processData = ((gameMode) => {
 
     for (const ammoPack of ammoPacks)
     {
-        if (!priceList[ammoPack._id])
+        if (!priceListAvg24h[ammoPack._id])
         {
             if (DEBUG) console.info(`[${gameMode}] edge case ammo pack ${ammoPack._id} ${ammoPack._name} not found in prices, adding manually`);
             // get price of item to multiply price of
             const itemMultipler = ammoPack._props.StackSlots[0]._max_count;
-            const singleItemPrice = getItemPrice(priceList, sptHandbook.Items, ammoPack._props.StackSlots[0]._props.filters[0].Filter[0]);
-            const price = singleItemPrice * itemMultipler;
+            const singleItemPriceAvg = getItemPrice(priceListAvg24h, sptHandbook.Items, ammoPack._props.StackSlots[0]._props.filters[0].Filter[0]);
+            const singleItemPriceFlea = getItemPrice(priceListFleaMarket, sptHandbook.Items, ammoPack._props.StackSlots[0]._props.filters[0].Filter[0]);
+            const priceAvg = singleItemPriceAvg * itemMultipler;
+            const priceFlea = singleItemPriceFlea * itemMultipler;
 
-            priceList[ammoPack._id] = price;
-
+            priceListAvg24h[ammoPack._id] = priceAvg;
+            priceListFleaMarket[ammoPack._id] = priceFlea;
         }
     }
 
-    // Write out the updated price data
-    fs.writeFileSync(`prices-${gameMode}.json`, JSON.stringify(priceList, null, 4));
+    // Write out the updated price data - both versions
+    fs.writeFileSync(`prices-${gameMode}.json`, JSON.stringify(priceListAvg24h, null, 4));
+    fs.writeFileSync(`prices-fairprice-${gameMode}.json`, JSON.stringify(priceListFleaMarket, null, 4));
+    console.log(`[${gameMode}] Wrote prices-${gameMode}.json and prices-fairprice-${gameMode}.json`);
 });
 
 const processTarkovDevPrices = ((gameMode, tarkovDevPrices) => {
@@ -117,9 +142,19 @@ const processTarkovDevPrices = ((gameMode, tarkovDevPrices) => {
             continue;
         }
 
+        // Extract flea market price from sellFor array
+        let fleaMarketPrice = null;
+        if (item.sellFor && Array.isArray(item.sellFor)) {
+            const fleaMarketEntry = item.sellFor.find(entry => entry.source === "fleaMarket");
+            if (fleaMarketEntry) {
+                fleaMarketPrice = fleaMarketEntry.priceRUB;
+            }
+        }
+
         filteredTarkovDevPrices[item.id] = {
             Name: item.name,
             Average24hPrice: item.avg24hPrice,
+            FleaMarketPrice: fleaMarketPrice || item.low24hPrice || item.avg24hPrice,
             TemplateId: item.id
         };
     }
@@ -143,4 +178,10 @@ const downloadFile = (async (url, filename) => {
 });
 
 // Trigger main
-await main();
+try {
+    await main();
+    console.log("Script completed successfully!");
+} catch (error) {
+    console.error("Error running script:", error);
+    process.exit(1);
+}
