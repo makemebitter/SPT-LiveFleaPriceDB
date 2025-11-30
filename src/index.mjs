@@ -9,6 +9,7 @@ import { gql, GraphQLClient } from 'graphql-request'
 const DEBUG = false;
 
 const main = (async () => {
+    console.log("Starting price fetch...");
     // Fetch data
     if (!DEBUG)
     {
@@ -17,15 +18,18 @@ const main = (async () => {
             errorPolicy: "ignore"
         });
         
+        console.log("Fetching Tarkov.dev data...");
         // Fetch data from tarkov.dev
         await fetchTarkovDevData(graphQLClient, 'regular');
         await fetchTarkovDevData(graphQLClient, 'pve');
 
+        console.log("Fetching SPT data files...");
         // Fetch the latest prices.json and handbook.json from SPT's git repo
         await downloadFile('https://raw.githubusercontent.com/sp-tarkov/server-csharp/refs/heads/main/Libraries/SPTarkov.Server.Assets/SPT_Data/database/templates/handbook.json', 'spthandbook.json');
         await downloadFile('https://raw.githubusercontent.com/sp-tarkov/server-csharp/refs/heads/main/Libraries/SPTarkov.Server.Assets/SPT_Data/database/templates/prices.json', 'sptprices.json');
     }
 
+    console.log("Processing data...");
     // PvP prices are fucked, but users want them anyways, good luck
     processData('regular');
     processData('pve');

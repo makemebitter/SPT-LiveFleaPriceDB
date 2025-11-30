@@ -29,5 +29,7 @@ jobs:
           add: |
             - prices-regular.json
             - prices-pve.json
+            - prices-fairprice-regular.json
+            - prices-fairprice-pve.json
           message: 'Update prices'
           
